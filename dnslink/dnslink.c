@@ -95,6 +95,55 @@ Expect these resolutions:
 #include "ipfs/cid/cid.h"
 #include "ipfs/path/path.h"
 
+int ipfs_dns_lookup(char **output_path, char *start_domain, int recursive)
+{
+    int i, err;
+    char **txt, *domain, *resolved_domain;
+
+    domain = malloc (strlen (start_domain) + 1);
+    if (!domain) {
+        return 1;
+    }
+    strcpy (domain, start_domain);
+
+    for (i = 0 ; i < DefaultDepthLimit ; i++) {
+        if (memcmp (domain, "/ipns/", 6) == 0) {
+            err = ipfs_dnslink_resolv_lookupTXT(&txt, domain + 6);
+        } else {
+            err = ipfs_dnslink_resolv_lookupTXT(&txt, domain);
+        }
+        free (domain);
+
+        if (err) {
+            return err;
+        }
+
+        err = ipfs_dnslink_parse_txt(&resolved_domain, *txt);
+        if (err) {
+            free (*txt);
+            free (txt);
+            return err;
+        }
+
+        free (*txt);
+        free (txt);
+        domain = resolved_domain;
+
+        if (!recursive) {
+            // not recursive.
+            break;
+        }
+
+        if (memcmp (domain, "/ipfs/", 6) == 0) {
+            break;
+        }
+    } while (--recursive);
+
+    *output_path = domain;
+
+    return 0;
+}
+
 int ipfs_dns (int argc, char **argv)
 {
 #ifdef __MINGW32__
@@ -103,7 +152,7 @@ int ipfs_dns (int argc, char **argv)
     }
 #else
         int err, r=0, i;
-        char **txt, *path, *param;
+        char *path;
 
         if (argc == 4 && strcmp ("-r", argv[2])==0) {
             r = 1;
@@ -115,49 +164,15 @@ int ipfs_dns (int argc, char **argv)
             return -1;
         }
 
-        param = malloc (strlen (argv[2]) + 1);
-        if (!param) {
-            fprintf (stderr, "memory allocation failed.\n");
-            return 1;
+        err = ipfs_dns_lookup (&path, argv[2], r);
+
+        if (err) {
+            fprintf (stderr, "dns lookup: %s\n", Err[err]);
+            return -1;
         }
-        strcpy (param, argv[2]);
 
-        for (i = 0 ; i < DefaultDepthLimit ; i++) {
-            if (memcmp(param, "/ipns/", 6) == 0) {
-                err = ipfs_dnslink_resolv_lookupTXT (&txt, param+6);
-            } else {
-                err = ipfs_dnslink_resolv_lookupTXT (&txt, param);
-            }
-            free (param);
-
-            if (err) {
-                fprintf (stderr, "dns lookupTXT: %s\n", Err[err]);
-                return err;
-            }
-
-            err = ipfs_dnslink_parse_txt(&path, *txt);
-            if (err) {
-                free (*txt);
-                free (txt);
-                fprintf (stderr, "dns parse_txt: %s\n", Err[err]);
-                return err;
-            }
-
-            free (*txt);
-            free (txt);
-            param = path;
-
-            if (! r) {
-                // not recursive.
-                break;
-            }
-
-            if (memcmp(path, "/ipfs/", 6) == 0) {
-                break;
-            }
-        } while (--r);
-        fprintf (stdout, "%s\n", param);
-        free (param);
+        fprintf (stdout, "%s\n", path);
+        free (path);
 
         return 0;
     }
